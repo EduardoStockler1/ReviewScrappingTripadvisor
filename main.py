@@ -47,7 +47,7 @@ def scrap_url(scrapper: Scrapper, csv_writer: csv.DictWriter, page_title: str):
         while has_next_page:
             scrapper.wait_reviews_to_load()
             tmp_reviews, processed = scrapper.scrap_page()
-            reviews += tmp_reviews  
+            reviews += tmp_reviews
             counter += processed
 
             info("{} -> {:.2f}% ({}/{})".format(page_title,
@@ -88,27 +88,38 @@ def start_csv_writer(file: TextIO) -> csv.DictWriter:
 
 def url_task(url: str, directory: str):
     info("Iniciando {}".format(url))
-    scrapper = Scrapper()
     url_timer = Timer()
     url_timer.start()
 
-    scrapper.open_page(url)
-    page_title = scrapper.get_page_title().replace(" ", "_")
-    debug("{} -> Página 1 aberta".format(page_title))
-    filename = unidecode.unidecode(page_title)
-    info("{} -> Abrindo o arquivo".format(filename))
-    file = open("reviews/{}/{}.csv".format(directory, filename), "w")
-    dict_to_csv_writer = start_csv_writer(file)
+    # Scrapper agora é usado como context manager: garante o fechamento do
+    # browser mesmo se `open_page`, `get_page_title` ou o scraping em si
+    # lançarem uma exceção (ex.: bloqueio anti-bot, timeout de rede).
+    with Scrapper() as scrapper:
+        scrapper.open_page(url)
+        page_title = scrapper.get_page_title().replace(" ", "_")
+        debug("{} -> Página 1 aberta".format(page_title))
+        filename = unidecode.unidecode(page_title)
+        info("{} -> Abrindo o arquivo".format(filename))
 
-    info("{} -> Iniciando o scraping".format(page_title))
-    scrap_url(
-        scrapper=scrapper,
-        csv_writer=dict_to_csv_writer,
-        page_title=page_title
-    )
+        # BUG CORRIGIDO: `directory` já é um caminho absoluto completo
+        # (os.getcwd() + "/reviews/{begin_time}"). O código original
+        # formatava de novo como "reviews/{directory}/...", duplicando o
+        # prefixo "reviews/" e resultando num caminho que nunca existia
+        # (FileNotFoundError na hora de abrir o CSV).
+        csv_path = os.path.join(directory, "{}.csv".format(filename))
+        file = open(csv_path, "w", newline="", encoding="utf-8")
+        dict_to_csv_writer = start_csv_writer(file)
 
-    info("{} -> Fechando o arquivo".format(page_title))
-    file.close()
+        info("{} -> Iniciando o scraping".format(page_title))
+        scrap_url(
+            scrapper=scrapper,
+            csv_writer=dict_to_csv_writer,
+            page_title=page_title
+        )
+
+        info("{} -> Fechando o arquivo".format(page_title))
+        file.close()
+
     beep("done")
     info("DONE -----> {} terminada em {} segundos".format(page_title, url_timer.stop()))
 
@@ -123,7 +134,7 @@ def main():
     with futures.ThreadPoolExecutor(THREADS) as executor:
         debug("Dentro da threadpool")
         future_results = {url: executor.submit(
-            url_task, url, begin_time) for url in urls}
+            url_task, url, directory) for url in urls}
         for url, future in future_results.items():
             debug("Checando o resultado de {}".format(url))
             try:

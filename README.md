@@ -1,7 +1,8 @@
 # Review Scrapper
 Este software coleta _reviews_ de pontos turísticos na plataforma TripAdvisor.
 Foi criado durante minha primeira Iniciação Científica, cujo produto final foi este script 
-e [este artigo](https://journals-sol.sbc.org.br/index.php/isys/article/view/3644), publicado na revista iSys.
+e [este artigo](https://journals-sol.s
+bc.org.br/index.php/isys/article/view/3644), publicado na revista iSys.
 
 ## Instalação
 1. Clone o repositório
