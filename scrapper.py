@@ -51,7 +51,7 @@ HARD_BLOCK_TEXT_HINTS = (
 # Limite de reviews a coletar no total (soma de todas as páginas) — útil
 # pra testar o script rapidamente sem esperar todas as páginas carregarem.
 # None = sem limite, coleta tudo.
-MAX_REVIEWS = 50
+MAX_REVIEWS = None
 
 CSS_CLASSES = {
     "obstacles": {
