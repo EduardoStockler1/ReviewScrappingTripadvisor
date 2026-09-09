@@ -5,7 +5,7 @@ import random
 import re
 import time
 import unicodedata
-from logger import debug, error, info
+import logger
 from typing import Dict, List, Optional, Union, Tuple
 
 from playwright.sync_api import (
@@ -29,7 +29,7 @@ except ImportError:
     MAX_DELAY_BETWEEN_ACTIONS = 4.0
 
 # Indícios de que a página atual é um desafio anti-bot (Cloudflare/PerimeterX)
-# em vez do conteúdo real do TripAdvisor.
+# em vez do conteúdo real do Tripadvisor.
 CHALLENGE_TITLE_HINTS = (
     "just a moment",
     "attention required",
@@ -41,17 +41,16 @@ CHALLENGE_TITLE_HINTS = (
 
 # Indícios de BLOQUEIO TERMINAL: página informativa sem captcha nenhum pra
 # resolver ("acesso restrito"). Diferente de um desafio interativo, esperar
-# aqui não adianta nada — é preciso parar e reduzir o ritmo de requisições.
+# aqui não adianta nada, precisa parar e reduzir o ritmo de requisições.
 HARD_BLOCK_TEXT_HINTS = (
     "acesso está temporariamente restrito",
     "temporarily restricted",
     "access to this page has been denied",
 )
 
-# Limite de reviews a coletar no total (soma de todas as páginas) — útil
-# pra testar o script rapidamente sem esperar todas as páginas carregarem.
+# Limite de reviews a coletar no total (soma de todas as páginas) — é pra ser usado com fim de testes.
 # None = sem limite, coleta tudo.
-MAX_REVIEWS = None
+MAX_REVIEWS = 100
 
 CSS_CLASSES = {
     "obstacles": {
@@ -59,7 +58,7 @@ CSS_CLASSES = {
     }
 }
 
-
+# XPath e regex usados em vários pontos do scrapper.py. Mantidos aqui pra não poluir a classe Scrapper.
 XPATHS = {
     "bottom_ads_closer": ".//button[contains(@type, 'button') and contains (@aria-label, 'Close')]",
     "bottom_ads": ".//div[contains(@class, '{}')]".format(CSS_CLASSES["obstacles"]["bottom_ads"]),
@@ -178,11 +177,11 @@ MESES_ABREV_PT = {
 class Scrapper:
 
     # =========================================================================
-    # 1) CRIAÇÃO / FECHAMENTO DO NAVEGADOR
+    # 1) CRIAÇÃO / FECHAMENTO DO NAVEGADOR -> Playwright + Chromium + Contexto persistente
     # =========================================================================
 
     def __init__(self):
-        self.playwright = sync_playwright().start()
+        self.playwright = sync_playwright().start() # Inicia o playwright 
 
         # Limita quantas vezes salvamos o HTML de um card de review com
         # campo ausente, pra não encher o disco se o problema for
@@ -203,10 +202,8 @@ class Scrapper:
         )
 
         # Contexto persistente: se já existir uma sessão salva (depois de
-        # você resolver o captcha manualmente uma vez com HEADLESS=False),
-        # ela é reaproveitada aqui — evita começar do zero "anônimo" a cada
-        # execução, o que é justamente o padrão que dispara o desafio depois
-        # de várias requisições.
+        # você resolver o captcha manualmente uma vez com HEADLESS=False), 
+        # Evita começar do zero "anônimo" a cada execução.
         context_kwargs = {
             "locale": "pt-BR",
             "user_agent": (
@@ -217,7 +214,7 @@ class Scrapper:
             "viewport": {"width": 1366, "height": 900},
         }
         if os.path.exists(STORAGE_STATE_PATH):
-            debug(f"Reaproveitando sessão salva em {STORAGE_STATE_PATH}")
+            logger.debug(f"Reaproveitando sessão salva em {STORAGE_STATE_PATH}")
             context_kwargs["storage_state"] = STORAGE_STATE_PATH
 
         self.context = self.browser.new_context(**context_kwargs)
@@ -253,7 +250,7 @@ class Scrapper:
         return False
 
     def close(self):
-        debug("Fechando navegador")
+        logger.debug("Fechando navegador")
         try:
             self.context.close()
         finally:
@@ -267,9 +264,9 @@ class Scrapper:
         próximas execuções (evita repetir o desafio anti-bot a cada run)."""
         try:
             self.context.storage_state(path=STORAGE_STATE_PATH)
-            debug(f"Sessão salva em {STORAGE_STATE_PATH}")
+            logger.debug(f"Sessão salva em {STORAGE_STATE_PATH}")
         except Exception as e:
-            error(f"Não foi possível salvar a sessão: {e}")
+            logger.error(f"Não foi possível salvar a sessão: {e}")
 
     # =========================================================================
     # 2) ABRIR A PÁGINA (+ desafios anti-bot, cookies, obstáculos)
@@ -277,31 +274,31 @@ class Scrapper:
 
     def open_page(self, url: str, cookies: bool = True):
         t0 = time.monotonic()
-        info("[TIMING] Abrindo página {}".format(url))
+        logger.info("[TIMING] Abrindo página {}".format(url))
         # domcontentloaded é mais confiável que networkidle em páginas com
         # anúncios/telemetria que nunca "silenciam" a rede.
         self.page.goto(
             url,
             wait_until="domcontentloaded"
         )
-        info(f"[TIMING] goto concluído em {time.monotonic() - t0:.1f}s")
+        logger.info(f"[TIMING] goto concluído em {time.monotonic() - t0:.1f}s")
 
         # Verifica ANTES de tentar aceitar cookies/H1: se caiu num desafio
         # anti-bot, não adianta procurar esses elementos, eles não existem
         # nessa tela.
         self.__wait_out_challenge()
-        info(f"[TIMING] challenge check concluído em {time.monotonic() - t0:.1f}s")
+        logger.info(f"[TIMING] challenge check concluído em {time.monotonic() - t0:.1f}s")
 
         if cookies:
             self.__handle_cookies()
-            info(f"[TIMING] cookies tratados em {time.monotonic() - t0:.1f}s")
+            logger.info(f"[TIMING] cookies tratados em {time.monotonic() - t0:.1f}s")
             # O layout muda ao fechar o banner (re-render); um pequeno
             # respiro evita que os próximos locators disputem com esse
             # re-render em andamento.
             self.page.wait_for_timeout(1000)
 
         self.__handle_obstacles()
-        info(f"[TIMING] obstáculos tratados em {time.monotonic() - t0:.1f}s")
+        logger.info(f"[TIMING] obstáculos tratados em {time.monotonic() - t0:.1f}s")
 
     def __is_challenge_page(self) -> bool:
         title = unicodedata.normalize("NFC", self.page.title() or "").lower()
@@ -347,13 +344,13 @@ class Scrapper:
                 "será salva para as próximas execuções."
             )
 
-        info("Desafio anti-bot detectado — resolva manualmente na janela do navegador...")
+        logger.info("Desafio anti-bot detectado — resolva manualmente na janela do navegador...")
         # Espera bastante (o usuário precisa clicar/resolver o captcha).
         # Consideramos "resolvido" quando o h1 da página finalmente aparece.
         self.page.locator(f'xpath={XPATHS["place_name"]}').wait_for(
             state="visible", timeout=180000
         )
-        info("Desafio resolvido, salvando sessão")
+        logger.info("Desafio resolvido, salvando sessão")
         self.save_session()
 
     def __handle_cookies(self):
@@ -370,10 +367,10 @@ class Scrapper:
             # silenciosamente se o layout mudar no meio do processo.
             cookie_button.wait_for(state="hidden", timeout=10000)
 
-            debug("Cookies aceitos")
+            logger.debug("Cookies aceitos")
 
         except TimeoutError:
-            debug("Sem popup de cookies (ou não desapareceu a tempo)")
+            logger.debug("Sem popup de cookies (ou não desapareceu a tempo)")
             self.__dump_debug_snapshot("cookie_banner_issue")
 
     def __handle_obstacles(self):
@@ -400,13 +397,13 @@ class Scrapper:
             close_button.first.wait_for(state="visible", timeout=wait_timeout)
             close_button.first.click(force=True, timeout=5000)
             self.page.wait_for_timeout(500)
-            info(f"[TIMING] modal interstitial fechado em {time.monotonic() - t0:.1f}s")
+            logger.info(f"[TIMING] modal interstitial fechado em {time.monotonic() - t0:.1f}s")
             return True
         except TimeoutError:
             return False
 
     def __have_ads_at_bottom(self) -> Optional[Locator]:
-        debug("Verificando se há anúncios no final da página")
+        logger.debug("Verificando se há anúncios no final da página")
 
         bottom_ads = self.page.locator(f'xpath={XPATHS["bottom_ads"]}')
 
@@ -416,33 +413,33 @@ class Scrapper:
         return None
 
     def __handle_ads(self, bottom_ads: Locator):
-        debug("Fechando anúncios")
+        logger.debug("Fechando anúncios")
         try:
             bottom_ads.locator(f'xpath={XPATHS["bottom_ads_closer"]}').click(timeout=5000)
         except TimeoutError:
-            debug("Botão de fechar anúncio não encontrado/clicável")
+            logger.debug("Botão de fechar anúncio não encontrado/clicável")
 
     def get_page_title(self, max_wait_seconds: int = 120, poll_seconds: int = 5):
         t0 = time.monotonic()
-        info("[TIMING] Esperando h1 (com polling do interstitial)...")
+        logger.info("[TIMING] Esperando h1 (com polling do interstitial)...")
 
         while time.monotonic() - t0 < max_wait_seconds:
             # Checagem rápida (não bloqueia muito se não tiver nada): se o
             # anúncio apareceu nesse meio-tempo, fecha antes de tentar o h1
             # de novo.
             if self.__handle_interstitial(wait_timeout=500):
-                info(f"[TIMING] interstitial fechado durante polling em {time.monotonic() - t0:.1f}s")
+                logger.info(f"[TIMING] interstitial fechado durante polling em {time.monotonic() - t0:.1f}s")
 
             try:
                 result = self.page.locator(
                     f'xpath={XPATHS["place_name"]}'
                 ).text_content(timeout=poll_seconds * 1000)
-                info(f"[TIMING] h1 obtido em {time.monotonic() - t0:.1f}s")
+                logger.info(f"[TIMING] h1 obtido em {time.monotonic() - t0:.1f}s")
                 return result
             except TimeoutError:
                 continue
 
-        info(f"[TIMING] h1 NÃO apareceu após {time.monotonic() - t0:.1f}s (polling esgotado)")
+        logger.info(f"[TIMING] h1 NÃO apareceu após {time.monotonic() - t0:.1f}s (polling esgotado)")
         self.__dump_debug_snapshot("get_page_title_timeout")
         raise TimeoutError(
             f"h1 não apareceu após {max_wait_seconds}s de polling, mesmo "
@@ -459,21 +456,21 @@ class Scrapper:
         ).wait_for()
 
     def get_review_amount(self):
-        debug("Obtendo quantidade de reviews no ponto turístico")
+        logger.debug("Obtendo quantidade de reviews no ponto turístico")
         pagination_info = self.page.locator(f'xpath={XPATHS["pagination_info"]}').text_content()
         pattern = re.compile(REGEXES["get_review_amount"])
         amount = 0
         try:
             review_amount_str = re.match(pattern, pagination_info).group(1)
             amount = int(review_amount_str.replace(".", ""))
-            debug(f"{amount} reviews no total")
+            logger.debug(f"{amount} reviews no total")
         except Exception as e:
-            error("Erro ao obter a quantidade de reviews: {}".format(e))
+            logger.error("Erro ao obter a quantidade de reviews: {}".format(e))
 
         return amount
 
     def has_next_page(self):
-        debug("Verificando se há próxima página")
+        logger.debug("Verificando se há próxima página")
 
         next_button = self.page.locator(f'xpath={XPATHS["next_page_button"]}')
 
@@ -492,7 +489,7 @@ class Scrapper:
 
     def go_to_next_page(self, page_title):
 
-        info(f"{page_title} -> Indo para próxima página")
+        logger.info(f"{page_title} -> Indo para próxima página")
 
         # Pausa curta antes de navegar: evita o padrão "clique instantâneo
         # em intervalos idênticos" que é um dos sinais mais fáceis de
@@ -515,7 +512,7 @@ class Scrapper:
     # =========================================================================
 
     def scrap_page(self) -> Tuple[List[Dict], int]:
-        debug("Extraindo reviews da página")
+        logger.debug("Extraindo reviews da página")
         raw_reviews = self.page.locator(f'xpath={XPATHS["review_cards"]}').all()
         page_reviews = []
 
@@ -525,7 +522,7 @@ class Scrapper:
             # Limite de teste: para de extrair assim que atingir o total
             # (soma de todas as páginas já processadas), mesmo no meio desta.
             if MAX_REVIEWS is not None and self.__total_reviews_collected >= MAX_REVIEWS:
-                info(f"Limite de {MAX_REVIEWS} reviews atingido. Parando a extração.")
+                logger.info(f"Limite de {MAX_REVIEWS} reviews atingido. Parando a extração.")
                 break
 
             # Em vez de assumir por posição (pop()) que o último elemento é um
@@ -537,15 +534,15 @@ class Scrapper:
             new_data = self.handle_review(review)
 
             if new_data is not None:
-                info("Review extraído: {}".format(new_data))
+                logger.info("Review extraído: {}".format(new_data))
                 page_reviews.append(new_data)
                 counter += 1
                 self.__total_reviews_collected += 1
             else:
                 skipped += 1
 
-        info(f"Encontrados {counter} reviews ({skipped} ignorados por erro de parsing). "
-             f"Total acumulado: {self.__total_reviews_collected}.")
+        logger.info(f"Encontrados {counter} reviews ({skipped} ignorados por erro de parsing). "
+                    f"Total acumulado: {self.__total_reviews_collected}.")
         return page_reviews, counter
 
     def has_reached_review_limit(self) -> bool:
@@ -600,7 +597,7 @@ class Scrapper:
                 "category": category,
             }
         except Exception as e:
-            error(f"Erro ao processar review, ignorando: {e}")
+            logger.error(f"Erro ao processar review, ignorando: {e}")
             return None
 
     def __get_date_category_raw_text(self, review: Locator) -> str:
@@ -629,7 +626,7 @@ class Scrapper:
         3. Fallback: varre todo div/span do card em busca de um texto que
            seja SÓ a data (sem categoria colada), pro caso de vir isolada.
         """
-        debug("Obtendo data do review")
+        logger.debug("Obtendo data do review")
 
         full_date = self.__safe_text(review.locator(f'xpath={XPATHS["review_date_full"]}'))
         if full_date:
@@ -657,7 +654,7 @@ class Scrapper:
           - completo: "Feita em 15 de agosto de 2024" -> "15/08/2024"
           - curto (sem dia): "out. de 2025" -> "10/2025"
         """
-        debug("Parseando data")
+        logger.debug("Parseando data")
         date = date.strip()
 
         full_match = re.match(REGEXES["full_date"], date)
@@ -665,12 +662,12 @@ class Scrapper:
             dia, mes_nome, ano = full_match.groups()
             mes = MESES_PT.get(mes_nome.lower())
             if mes is None:
-                error(f"Mês não reconhecido: '{mes_nome}'")
+                logger.error(f"Mês não reconhecido: '{mes_nome}'")
                 return None
             try:
                 return datetime.date(int(ano), mes, int(dia)).strftime("%d/%m/%Y")
             except ValueError as e:
-                error(f"Data inválida ({date}): {e}")
+                logger.error(f"Data inválida ({date}): {e}")
                 return None
 
         short_match = re.match(REGEXES["short_date"], date, re.IGNORECASE)
@@ -678,20 +675,20 @@ class Scrapper:
             mes_abrev, ano = short_match.groups()
             mes = MESES_ABREV_PT.get(mes_abrev.lower().rstrip('.'))
             if mes is None:
-                error(f"Mês abreviado não reconhecido: '{mes_abrev}'")
+                logger.error(f"Mês abreviado não reconhecido: '{mes_abrev}'")
                 return None
             # Sem dia disponível nesse formato — retornamos só mês/ano em vez
             # de inventar um dia (ex.: "01") que passaria uma precisão falsa.
             return f"{mes:02d}/{ano}"
 
-        error(f"Formato de data inesperado: '{date}'")
+        logger.error(f"Formato de data inesperado: '{date}'")
         return None
 
     def parse_rating(self, rating_str: Optional[str]) -> Optional[float]:
-        debug("Parseando avaliação do turista")
+        logger.debug("Parseando avaliação do turista")
 
         if not rating_str:
-            error("Rating vazio ou ausente")
+            logger.error("Rating vazio ou ausente")
             return None
 
         pattern = re.compile(REGEXES["rating"])
@@ -701,11 +698,11 @@ class Scrapper:
                 raise ValueError(f"Não bateu com o padrão esperado: '{rating_str}'")
             return float(match.group(1).replace(",", "."))
         except Exception as e:
-            error("Erro ao parsear o rating ({}): {}".format(rating_str, e))
+            logger.error("Erro ao parsear o rating ({}): {}".format(rating_str, e))
             return None
 
     def get_local(self, review: Locator) -> str:
-        debug("Obtendo local no turista")
+        logger.debug("Obtendo local no turista")
         # Pós-redesign: cidade e contribuições vêm em divs "vYLts" separadas
         # (a primeira é a cidade, dentro de um <span>; a segunda é só texto
         # "N contribuições"). Não precisa mais de regex pra separar número
@@ -766,9 +763,9 @@ class Scrapper:
             self.page.screenshot(path=f"{base}.png", full_page=True)
             with open(f"{base}.html", "w", encoding="utf-8") as f:
                 f.write(self.page.content())
-            error(f"Snapshot de diagnóstico salvo em {base}.png / {base}.html")
+            logger.error(f"Snapshot de diagnóstico salvo em {base}.png / {base}.html")
         except Exception as e:
-            error(f"Não foi possível salvar snapshot de diagnóstico: {e}")
+            logger.error(f"Não foi possível salvar snapshot de diagnóstico: {e}")
 
     def __dump_review_html_once(self, review: Locator, label: str, max_dumps: int = 3):
         """Salva o outerHTML de um card de review específico quando um campo
@@ -785,9 +782,9 @@ class Scrapper:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(html)
             self.__review_dumps_done += 1
-            error(f"HTML do card de review salvo em {path}")
+            logger.error(f"HTML do card de review salvo em {path}")
         except Exception as e:
-            error(f"Não foi possível salvar HTML do card de review: {e}")
+            logger.error(f"Não foi possível salvar HTML do card de review: {e}")
 
     def print_element(self, element):
         element.screenshot(path=f"{os.getcwd()}/element.png")
