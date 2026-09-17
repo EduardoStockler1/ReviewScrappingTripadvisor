@@ -12,12 +12,12 @@ import unidecode as unidecode
 
 from beeper import beep
 from config import THREADS, SAVING_THRESHOLD
-from scrapper import Scrapper
+from scraper import Scraper
 from logger import init_logging, debug, info, error
 from timer import Timer
 
 timer = Timer()
-logger = getLogger("scrapper")
+logger = getLogger("scraper")
 try:
     locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 except:
@@ -35,8 +35,8 @@ def write_data_chunk(csv_writer: csv.DictWriter, data: List[Dict]):
         beep("exception")
 
 
-def scrap_url(scrapper: Scrapper, csv_writer: csv.DictWriter, page_title: str):
-    review_amount = scrapper.get_review_amount()
+def scrap_url(scraper: Scraper, csv_writer: csv.DictWriter, page_title: str):
+    review_amount = scraper.get_review_amount()
     info(
         "{} -> {} reviews encontrados".format(page_title, review_amount))
     reviews = []
@@ -45,14 +45,14 @@ def scrap_url(scrapper: Scrapper, csv_writer: csv.DictWriter, page_title: str):
 
     try:
         while has_next_page:
-            scrapper.wait_reviews_to_load()
-            tmp_reviews, processed = scrapper.scrap_page()
+            scraper.wait_reviews_to_load()
+            tmp_reviews, processed = scraper.scrap_page()
             reviews += tmp_reviews
             counter += processed
 
             info("{} -> {:.2f}% ({}/{})".format(page_title,
                          (counter/review_amount)*100, counter, review_amount))
-            has_next_page = scrapper.has_next_page()
+            has_next_page = scraper.has_next_page()
             info(f"Segurando {counter} reviews (vai salvar: {counter >= SAVING_THRESHOLD})")
             if counter >= SAVING_THRESHOLD:
                 write_data_chunk(csv_writer, reviews)
@@ -60,7 +60,7 @@ def scrap_url(scrapper: Scrapper, csv_writer: csv.DictWriter, page_title: str):
                 counter = 0
 
             if has_next_page:
-                scrapper.go_to_next_page(page_title)
+                scraper.go_to_next_page(page_title)
     except Exception as exc:
         error("{} gerou uma exceção => {}".format(page_title, exc))
         beep("exception")
@@ -91,12 +91,12 @@ def url_task(url: str, directory: str):
     url_timer = Timer()
     url_timer.start()
 
-    # Scrapper agora é usado como context manager: garante o fechamento do
+    # Scraper agora é usado como context manager: garante o fechamento do
     # browser mesmo se `open_page`, `get_page_title` ou o scraping em si
     # lançarem uma exceção (ex.: bloqueio anti-bot, timeout de rede).
-    with Scrapper() as scrapper:
-        scrapper.open_page(url)
-        page_title = scrapper.get_page_title().replace(" ", "_")
+    with Scraper() as scraper:
+        scraper.open_page(url)
+        page_title = scraper.get_page_title().replace(" ", "_")
         debug("{} -> Página 1 aberta".format(page_title))
         filename = unidecode.unidecode(page_title)
         info("{} -> Abrindo o arquivo".format(filename))
@@ -112,7 +112,7 @@ def url_task(url: str, directory: str):
 
         info("{} -> Iniciando o scraping".format(page_title))
         scrap_url(
-            scrapper=scrapper,
+            scraper=scraper,
             csv_writer=dict_to_csv_writer,
             page_title=page_title
         )
