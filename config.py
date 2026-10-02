@@ -11,7 +11,7 @@ STORAGE_STATE_PATH = "storage_state.json"
 MIN_DELAY_BETWEEN_ACTIONS = 1.5
 MAX_DELAY_BETWEEN_ACTIONS = 4.0
 
-MAX_REVIEWS = 50
+MAX_REVIEWS = 100
 
 # XPath e regex usados em vários pontos do scrapper.py. Mantidos aqui pra não poluir a classe Scrapper.
 XPATHS = {

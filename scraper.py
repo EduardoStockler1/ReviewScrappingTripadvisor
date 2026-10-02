@@ -50,7 +50,7 @@ class Scraper:
         #     context_kwargs["storage_state"] = config.STORAGE_STATE_PATH
 
         self.context = self.browser.new_context(**context_kwargs)
-        self.context.clear_cookies()
+        # self.context.clear_cookies()
         self.page = self.context.new_page() 
         self.page.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
@@ -127,7 +127,6 @@ class Scraper:
 
         while time.monotonic() - t0 < max_wait_seconds:
             try:
-                time.sleep(60)
                 logger.info(f" Esperando iframe interstitial aparecer (polling a cada {poll_seconds}s)...")
                 close_iframe.dump_frames_debug(self.page)
                 closed = close_iframe.close_interstitial(self.page, timeout = 1)
@@ -207,8 +206,6 @@ class Scraper:
         self.page.locator(
             f'xpath={config.XPATHS["next_page_button"]}'
         ).click()
-
-        self.__wait_out_challenge()
 
     def __human_delay(self):
         """Pausa curta e aleatória entre ações, pra não parecer um robô

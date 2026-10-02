@@ -97,7 +97,7 @@ def find_close_button_in_frame(frame):
         ).first
 
         if locator.count() > 0 and locator.is_visible():
-            print("    Elemento de fechamento encontrado pelo texto.")
+            print("Elemento de fechamento encontrado pelo texto.")
             return locator
 
     except Exception:
@@ -364,8 +364,9 @@ with sync_playwright() as playwright:
     )
 
     context.clear_cookies()
-    page = context.new_page()
 
+    page = context.new_page()
+    
     print("\nAbrindo TripAdvisor...")
 
     page.goto(
