@@ -4,11 +4,6 @@ import re
 
 INTERSTITIAL_TIMEOUT = 60
 
-
-# ============================================================
-# DEBUG DOS FRAMES
-# ============================================================
-
 def dump_frames_debug(page):
     print("\n" + "=" * 80)
     print("DEBUG — FRAMES")
@@ -37,10 +32,6 @@ def dump_frames_debug(page):
         # print(f"          url={frame.url!r}")
 
     print("=" * 80)
-
-# ============================================================
-# PROCURA O BOTÃO EM UM FRAME
-# ============================================================
 
 def find_close_button_in_frame(frame):
     selectors = [
@@ -132,15 +123,8 @@ def frame_has_interstitial(frame):
 
     return False
 
-
-# ============================================================
-# FECHA O INTERSTITIAL PROCURANDO EM TODOS OS FRAMES
-# ============================================================
-
 def close_interstitial(page, timeout=60):
-    print("\n" + "=" * 80)
-    print("PROCURANDO INTERSTITIAL")
-    print("=" * 80)
+    print("Procurando interstitial...")
 
     deadline = time.monotonic() + timeout
     tentativa = 0
@@ -155,10 +139,6 @@ def close_interstitial(page, timeout=60):
 
         print(f"\nTentativa {tentativa} - {len(frames)} frame(s)")
 
-        # --------------------------------------------------------
-        # 1. Procura em TODOS os frames
-        # --------------------------------------------------------
-
         for i, frame in enumerate(frames):
             try:
                 print(
@@ -172,7 +152,7 @@ def close_interstitial(page, timeout=60):
                 if button is None:
                     continue
 
-                print("\n🎯 BOTÃO DE FECHAR ENCONTRADO!")
+                print("\n Botão de close encontrado. Agora só clicar....")
 
                 try:
                     button.scroll_into_view_if_needed(timeout=2000)
@@ -184,26 +164,26 @@ def close_interstitial(page, timeout=60):
                 try:
                     button.click(timeout=5000)
                     clicked = True
-                    print("    ✅ Clique normal executado.")
+                    print("Clique normal executado.")
 
                 except Exception as click_error:
-                    print(f"    ⚠️ Clique normal falhou: {click_error}")
-                    print("    Tentando force=True...")
+                    print(f"Clique normal falhou: {click_error}")
+                    print("Tentando force=True...")
 
                     try:
                         button.click(force=True, timeout=5000)
                         clicked = True
                         print("    ✅ Clique force=True executado.")
                     except Exception as force_error:
-                        print(f"    ❌ Clique force=True falhou: {force_error}")
+                        print(f"Clique force=True falhou: {force_error}")
 
                 if clicked:
                     try:
                         button.wait_for(state="hidden", timeout=10000)
-                        print("    ✅ Botão desapareceu.")
+                        print("Botão desapareceu.")
                     except Exception:
                         print(
-                            "    ⚠️ Botão não confirmou desaparecimento; "
+                            "Botão não confirmou desaparecimento; "
                             "verificando o DOM novamente."
                         )
 
@@ -223,11 +203,11 @@ def close_interstitial(page, timeout=60):
                             continue
 
                     if not still_open:
-                        print("\n INTERSTITIAL FECHADO!")
+                        print("\n Intersential Fechou")
                         return True
 
                     print(
-                        "Ainda existe um elemento de fechamento visível."
+                        "Ainda existe um elemento de fechamento visível"
                     )
 
             except Exception as error:
@@ -235,10 +215,6 @@ def close_interstitial(page, timeout=60):
                     f"Erro no frame [{i}]: "
                     f"{type(error).__name__}: {error}"
                 )
-
-        # --------------------------------------------------------
-        # 2. Também procura diretamente na página principal
-        # --------------------------------------------------------
 
         try:
             main_frame = page.main_frame
@@ -262,7 +238,7 @@ def close_interstitial(page, timeout=60):
                     time.sleep(1)
 
                     if find_close_button_in_frame(main_frame) is None:
-                        print("\nINTERSTITIAL FECHADO!")
+                        print("\n Intersential Fechou no frame principal")
                         return True
 
         except Exception as error:
@@ -277,7 +253,7 @@ def close_interstitial(page, timeout=60):
 
         time.sleep(1)
 
-    print("\nNão consegui fechar o interstitial dentro do timeout.")
+    print("\nNão foi possível fechar o interstitial dentro do timeout.")
     dump_frames_debug(page)
 
     return False

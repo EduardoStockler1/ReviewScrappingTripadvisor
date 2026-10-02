@@ -2,11 +2,6 @@ from playwright.sync_api import sync_playwright, TimeoutError
 import time
 import re
 
-
-# ============================================================
-# CONFIGURAÇÕES
-# ============================================================
-
 URL = (
     "https://www.tripadvisor.com.br/"
     "Attraction_Review-g303441-d1872890-Reviews-"
@@ -17,15 +12,8 @@ ACCEPT_COOKIES_XPATH = '//*[@id="onetrust-accept-btn-handler"]'
 
 INTERSTITIAL_TIMEOUT = 60
 
-
-# ============================================================
-# DEBUG DOS FRAMES
-# ============================================================
-
 def dump_frames_debug(page):
-    print("\n" + "=" * 80)
-    print("FRAMES ENCONTRADOS")
-    print("=" * 80)
+    print("Frames Encontrados:")
 
     frames = page.frames
 
@@ -42,29 +30,14 @@ def dump_frames_debug(page):
             except ValueError:
                 parent_index = "?"
 
-        print(
-            f"[FRAME {i}] "
-            f"parent={parent_index} "
-            f"name={frame.name!r}"
-        )
-        print(f"          url={frame.url!r}")
-
-    print("=" * 80)
-
-
-# ============================================================
-# PROCURA O BOTÃO EM UM FRAME
-# ============================================================
+        # print(
+        #     f"[FRAME {i}] "
+        #     f"parent={parent_index} "
+        #     f"name={frame.name!r}"
+        # )
+        # print(f"          url={frame.url!r}")
 
 def find_close_button_in_frame(frame):
-    """
-    Procura possíveis botões de fechar dentro de um frame.
-    Retorna o Locator quando encontra um botão visível.
-
-    A busca não depende da URL do iframe e também verifica
-    atributos e textos comuns de botões de fechamento.
-    """
-
     selectors = [
         '[data-automation="interstitialClose"] button',
         '[data-automation="interstitialClose"]',
@@ -134,11 +107,6 @@ def find_close_button_in_frame(frame):
 
 
 def frame_has_interstitial(frame):
-    """
-    Verifica se um frame parece conter um interstitial.
-    A verificação não depende da URL do frame.
-    """
-
     selectors = [
         '[data-automation*="interstitial"]',
         '[data-testid*="interstitial"]',
@@ -169,10 +137,7 @@ def frame_has_interstitial(frame):
 # ============================================================
 
 def close_interstitial(page, timeout=60):
-    print("\n" + "=" * 80)
     print("PROCURANDO INTERSTITIAL")
-    print("=" * 80)
-
     deadline = time.monotonic() + timeout
     tentativa = 0
 
@@ -184,15 +149,10 @@ def close_interstitial(page, timeout=60):
         except Exception:
             frames = []
 
-        print(
-            f"\nTentativa {tentativa} - "
-            f"{len(frames)} frame(s) encontrados"
-        )
+        print(f"\nTentativa {tentativa} - "f"{len(frames)} frame(s) encontrados")
 
-        # --------------------------------------------------------
-        # 1. Procura em todos os frames
-        # --------------------------------------------------------
 
+        # Procura em todos os frames
         for i, frame in enumerate(frames):
             try:
                 print(
@@ -240,11 +200,6 @@ def close_interstitial(page, timeout=60):
                         )
 
                 if clicked:
-
-                    # ------------------------------------------------
-                    # Aguarda o botão desaparecer
-                    # ------------------------------------------------
-
                     try:
                         button.wait_for(
                             state="hidden",
@@ -292,10 +247,6 @@ def close_interstitial(page, timeout=60):
                     f"{type(error).__name__}: {error}"
                 )
 
-        # --------------------------------------------------------
-        # 2. Verifica também o frame principal
-        # --------------------------------------------------------
-
         try:
             main_frame = page.main_frame
 
@@ -337,10 +288,6 @@ def close_interstitial(page, timeout=60):
                 f"{type(error).__name__}: {error}"
             )
 
-        # --------------------------------------------------------
-        # 3. Mostra os frames periodicamente para diagnóstico
-        # --------------------------------------------------------
-
         if tentativa % 5 == 0:
             print("\nFrames atuais:")
             dump_frames_debug(page)
@@ -356,17 +303,7 @@ def close_interstitial(page, timeout=60):
 
     return False
 
-
-# ============================================================
-# ACEITA COOKIES
-# ============================================================
-
 def accept_cookies(page):
-
-    print("\n" + "=" * 80)
-    print("VERIFICANDO COOKIES")
-    print("=" * 80)
-
     try:
 
         cookie_button = page.locator(
@@ -377,11 +314,7 @@ def accept_cookies(page):
             state="visible",
             timeout=30000
         )
-
-        print("Botão de cookies encontrado.")
-
         cookie_button.click(timeout=5000)
-
         try:
             cookie_button.wait_for(
                 state="hidden",
@@ -389,8 +322,6 @@ def accept_cookies(page):
             )
         except TimeoutError:
             pass
-
-        print("Cookies aceitos.")
 
     except TimeoutError:
 
@@ -405,10 +336,6 @@ def accept_cookies(page):
             f"Erro ao tratar os cookies: {error}"
         )
 
-
-# ============================================================
-# MAIN
-# ============================================================
 
 with sync_playwright() as playwright:
 
@@ -439,10 +366,6 @@ with sync_playwright() as playwright:
     context.clear_cookies()
     page = context.new_page()
 
-    # ========================================================
-    # ABRE A PÁGINA
-    # ========================================================
-
     print("\nAbrindo TripAdvisor...")
 
     page.goto(
@@ -453,25 +376,13 @@ with sync_playwright() as playwright:
 
     print("Página carregada.")
 
-    # ========================================================
-    # COOKIES
-    # ========================================================
-
     accept_cookies(page)
-
-    # ========================================================
-    # MOSTRA FRAMES INICIAIS
-    # ========================================================
 
     print("\nAguardando o carregamento dos interstitials...")
 
     time.sleep(1)
 
     dump_frames_debug(page)
-
-    # ========================================================
-    # FECHA INTERSTITIAL
-    # ========================================================
 
     closed = close_interstitial(
         page,
@@ -488,15 +399,7 @@ with sync_playwright() as playwright:
         print("O interstitial não foi fechado.")
         print("=" * 80)
 
-    # ========================================================
-    # DEBUG FINAL
-    # ========================================================
-
     dump_frames_debug(page)
-
-    # ========================================================
-    # MANTÉM O NAVEGADOR ABERTO
-    # ========================================================
 
     input(
         "\nPressione ENTER para fechar o navegador..."
