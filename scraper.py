@@ -4,9 +4,9 @@ import os
 import random
 import re
 import time
-import unicodedata
 import logger
 import config
+import close_iframe
 from typing import Dict, List, Optional, Tuple
 from playwright.sync_api import (
     sync_playwright,
@@ -21,19 +21,10 @@ class Scraper:
     # =========================================================================
 
     def __init__(self):
-        self.playwright = sync_playwright().start() # Inicia o playwright 
-
-        # Limita quantas vezes salvamos o HTML de um card de review com
-        # campo ausente, pra não encher o disco se o problema for
-        # sistemático (todas as milhares de reviews com o mesmo defeito).
+        self.playwright = sync_playwright().start() 
         self.__review_dumps_done = 0
-
-        # Soma de reviews já extraídos em todas as páginas — usado pelo
-        # limite de teste MAX_REVIEWS (ver scrap_page/has_reached_review_limit).
         self.__total_reviews_collected = 0
 
-        # Args que reduzem sinais óbvios de automação. Não é infalível contra
-        # PerimeterX/Cloudflare, mas evita demais detectores.
         self.browser = self.playwright.chromium.launch(
             headless=config.HEADLESS,
             args=[
@@ -41,9 +32,6 @@ class Scraper:
             ]
         )
 
-        # Config do navegador, contexto persistente: se já existir uma sessão salva (depois de
-        # resolver o captcha manualmente uma vez com HEADLESS=False), 
-        # Evita começar do zero "anônimo" a cada execução.
         context_kwargs = {
             "locale": "pt-BR",
             "user_agent": (
@@ -57,37 +45,17 @@ class Scraper:
             },
         }
 
-        # Se já existe um arquivo de sessão salvo (cookies/local storage), reaproveita ele pra não cair de novo no desafio anti-bot.
-        if os.path.exists(config.STORAGE_STATE_PATH):
-            logger.debug(f"Reaproveitando sessão salva em {config.STORAGE_STATE_PATH}")
-            context_kwargs["storage_state"] = config.STORAGE_STATE_PATH
+        # if os.path.exists(config.STORAGE_STATE_PATH):
+        #     logger.debug(f"Reaproveitando sessão salva em {config.STORAGE_STATE_PATH}")
+        #     context_kwargs["storage_state"] = config.STORAGE_STATE_PATH
 
         self.context = self.browser.new_context(**context_kwargs)
-
-        # Bloqueia requisições pra domínios de anúncio/tracking conhecidos.
-        # Registramos uma regex específica em vez de "**/*" + filtro em
-        # Python: dessa forma o próprio Playwright só aciona nosso callback
-        # quando a URL já bate com o padrão dos domínios de anúncio, sem
-        # round-trip pro nosso processo em toda requisição legítima da
-        # página (imagens de review, chamadas de API etc.), que estava
-        # adicionando overhead suficiente pra atrasar o carregamento.
-        
-        ad_domains_pattern = re.compile(
-            "|".join(re.escape(domain) for domain in config.AD_TRACKING_DOMAINS)
-        )
-        self.context.route(ad_domains_pattern, lambda route: route.abort())
-
-        self.page = self.context.new_page() # Cria página
-
-        # navigator.webdriver=true é o sinal mais básico e mais checado por
-        # scripts anti-bot. Sobrescrevemos antes de qualquer script da
-        # página rodar.
+        self.context.clear_cookies()
+        self.page = self.context.new_page() 
         self.page.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
 
-    # Permite usar "with Scraper() as s:" garantindo o fechamento do browser
-    # mesmo se uma exceção estourar no meio da raspagem.
     def __enter__(self):
         return self
 
@@ -121,83 +89,17 @@ class Scraper:
     def open_page(self, url: str, cookies: bool = True):
         t0 = time.monotonic()
         logger.info("[TIMING] Abrindo página {}".format(url))
-        # domcontentloaded é mais confiável que networkidle em páginas com
-        # anúncios/telemetria que nunca "silenciam" a rede.
+
         self.page.goto(
             url,
             wait_until="domcontentloaded"
         )
         logger.info(f"[TIMING] goto concluído em {time.monotonic() - t0:.1f}s")
 
-        # Verifica ANTES de tentar aceitar cookies/H1: se caiu num desafio
-        # anti-bot, não adianta procurar esses elementos, eles não existem
-        # nessa tela.
-        self.__wait_out_challenge()
-        logger.info(f"[TIMING] challenge check concluído em {time.monotonic() - t0:.1f}s")
-
         if cookies:
             self.__handle_cookies()
             logger.info(f"[TIMING] cookies tratados em {time.monotonic() - t0:.1f}s")
-            # O layout muda ao fechar o banner (re-render); um pequeno
-            # respiro evita que os próximos locators disputem com esse
-            # re-render em andamento.
             self.page.wait_for_timeout(1000)
-
-        self.__handle_obstacles()
-        logger.info(f"[TIMING] obstáculos tratados em {time.monotonic() - t0:.1f}s")
-
-    def __is_challenge_page(self) -> bool:
-        title = unicodedata.normalize("NFC", self.page.title() or "").lower()
-        return any(hint in title for hint in config.CHALLENGE_TITLE_HINTS)
-
-    def __is_hard_block_page(self) -> bool:
-        # Esse bloqueio específico usa o layout normal do site (logo do
-        # Tripadvisor, título da página normal), então checamos pelo texto
-        # visível do corpo, não pelo <title>.
-        try:
-            body_text = self.page.locator("body").text_content(timeout=3000) or ""
-        except TimeoutError:
-            return False
-        body_text = unicodedata.normalize("NFC", body_text).lower()
-        return any(hint in body_text for hint in config.HARD_BLOCK_TEXT_HINTS)
-
-    def __wait_out_challenge(self):
-        """Se detectar uma tela de desafio (captcha), dá tempo extra pra você
-        resolver manualmente (só faz sentido com HEADLESS=False). Depois de
-        resolvido, salva a sessão pra não precisar repetir no próximo run.
-
-        Se for um BLOQUEIO TERMINAL (sem captcha, só uma mensagem de acesso
-        restrito), não há nada pra esperar — falha imediatamente com uma
-        mensagem clara, em vez de travar 3 minutos à toa."""
-
-        if self.__is_hard_block_page():
-            raise RuntimeError(
-                "Bloqueio anti-bot terminal do TripAdvisor (sem captcha pra "
-                "resolver, IP provavelmente sinalizado). Não adianta tentar "
-                "de novo imediatamente — espere um período bem mais longo "
-                "(horas), reduza THREADS para 1, aumente os delays entre "
-                "requisições e considere trocar de IP se o problema persistir."
-            )
-
-        if not self.__is_challenge_page():
-            return
-
-        if config.HEADLESS:
-            raise RuntimeError(
-                "Desafio anti-bot detectado com HEADLESS=True (não dá pra "
-                "resolver captcha sem tela). Rode uma vez com HEADLESS=False "
-                "no config.py, resolva o captcha manualmente, e a sessão "
-                "será salva para as próximas execuções."
-            )
-
-        logger.info("Desafio anti-bot detectado — resolva manualmente na janela do navegador...")
-        # Espera bastante (o usuário precisa clicar/resolver o captcha).
-        # Consideramos "resolvido" quando o h1 da página finalmente aparece.
-        self.page.locator(f'xpath={config.XPATHS["place_name"]}').wait_for(
-            state="visible", timeout=180000
-        )
-        logger.info("Desafio resolvido, salvando sessão")
-        self.save_session()
 
     def __handle_cookies(self):
         cookie_button = self.page.locator(f'xpath={config.XPATHS["accept_cookies"]}')
@@ -219,62 +121,22 @@ class Scraper:
             logger.debug("Sem popup de cookies (ou não desapareceu a tempo)")
             self.__dump_debug_snapshot("cookie_banner_issue")
 
-    def __handle_obstacles(self):
-        self.__handle_interstitial()
-
-        bottom_ads = self.__have_ads_at_bottom()
-        if bottom_ads is not None:
-            self.__handle_ads(bottom_ads)
-
-    def __handle_interstitial(self, wait_timeout: int = 15000):
-        """Fecha o modal promocional nativo do Tripadvisor (cupom/desconto),
-        que aparece de forma intermitente sobre a página e pode atrasar ou
-        bloquear a hidratação do h1 se não for fechado.
-
-        wait_timeout menor (ex.: 1000ms) permite chamar isso repetidamente
-        num loop de polling sem gastar muito tempo em cada tentativa."""
-        t0 = time.monotonic()
-        close_button = self.page.locator(f'xpath={config.XPATHS["interstitial_close"]}')
-        try:
-            # wait_for(visible) espera o modal aparecer (ele é injetado via
-            # JS, pode demorar); force=True ignora checagens de
-            # actionability que às vezes falham em modais com animação de
-            # entrada/saída.
-            close_button.first.wait_for(state="visible", timeout=wait_timeout)
-            close_button.first.click(force=True, timeout=5000)
-            self.page.wait_for_timeout(500)
-            logger.info(f"[TIMING] modal interstitial fechado em {time.monotonic() - t0:.1f}s")
-            return True
-        except TimeoutError:
-            return False
-
-    def __have_ads_at_bottom(self) -> Optional[Locator]:
-        logger.debug("Verificando se há anúncios no final da página")
-
-        bottom_ads = self.page.locator(f'xpath={config.XPATHS["bottom_ads"]}')
-
-        if bottom_ads.count() > 0:
-            return bottom_ads
-
-        return None
-
-    def __handle_ads(self, bottom_ads: Locator):
-        logger.debug("Fechando anúncios")
-        try:
-            bottom_ads.locator(f'xpath={config.XPATHS["bottom_ads_closer"]}').click(timeout=5000)
-        except TimeoutError:
-            logger.debug("Botão de fechar anúncio não encontrado/clicável")
-
     def get_page_title(self, max_wait_seconds: int = 120, poll_seconds: int = 5):
         t0 = time.monotonic()
         logger.info("[TIMING] Esperando h1 (com polling do interstitial)...")
 
         while time.monotonic() - t0 < max_wait_seconds:
-            # Checagem rápida (não bloqueia muito se não tiver nada): se o
-            # anúncio apareceu nesse meio-tempo, fecha antes de tentar o h1
-            # de novo.
-            if self.__handle_interstitial(wait_timeout=500):
-                logger.info(f"[TIMING] interstitial fechado durante polling em {time.monotonic() - t0:.1f}s")
+            try:
+                time.sleep(60)
+                logger.info(f" Esperando iframe interstitial aparecer (polling a cada {poll_seconds}s)...")
+                close_iframe.dump_frames_debug(self.page)
+                closed = close_iframe.close_interstitial(self.page, timeout = 1)
+                if closed:
+                    logger.info(f"[TIMING] interstitial fechado em {time.monotonic() - t0:.1f}s")
+            except Exception as e:
+                logger.error(f"Erro ao tentar fechar interstitial: {e}")
+
+            close_iframe.dump_frames_debug(self.page)
 
             try:
                 result = self.page.locator(
@@ -286,7 +148,7 @@ class Scraper:
                 continue
 
         logger.info(f"[TIMING] h1 NÃO apareceu após {time.monotonic() - t0:.1f}s (polling esgotado)")
-        self.__dump_debug_snapshot("get_page_title_timeout")
+        
         raise TimeoutError(
             f"h1 não apareceu após {max_wait_seconds}s de polling, mesmo "
             "tentando fechar o interstitial repetidamente."
@@ -397,14 +259,7 @@ class Scraper:
         return config.MAX_REVIEWS is not None and self.__total_reviews_collected >= config.MAX_REVIEWS
 
     def handle_review(self, review) -> Optional[Dict]:
-        # Qualquer falha ao extrair um campo (elemento ausente, formato
-        # inesperado etc.) agora resulta em None em vez de derrubar a
-        # raspagem inteira da página.
         try:
-            # .first: o card pode conter uma resposta do estabelecimento
-            # logo abaixo, que às vezes reusa elementos parecidos (outro
-            # h3, outro texto) — sem .first isso vira "strict mode
-            # violation" por casar mais de um elemento.
             title = self.__safe_text(
                 review.locator(f'xpath={config.XPATHS["review_title"]}')
             )
@@ -416,8 +271,6 @@ class Scraper:
             raw_date = self.get_review_date(review)
             date = self.parse_date(raw_date) if raw_date else None
 
-            # Pós-redesign: a nota vem como texto do <title> filho do svg
-            # (aria-labelledby), não mais como atributo aria-label direto.
             raw_rating = self.__safe_text(
                 review.locator(f'xpath={config.XPATHS["review_rating"]}')
             )
@@ -427,10 +280,6 @@ class Scraper:
 
             category = self.get_category(review)
 
-            # Se algum campo essencial veio vazio, salva o HTML desse card
-            # específico (limitado a poucas vezes por execução) — assim dá
-            # pra diagnosticar rapidamente se algum seletor mudou de novo,
-            # sem precisar de mais uma rodada de prints manuais.
             if title is None or comment is None or raw_date is None:
                 self.__dump_review_html_once(review, "campo_ausente")
 
@@ -447,31 +296,12 @@ class Scraper:
             return None
 
     def __get_date_category_raw_text(self, review: Locator) -> str:
-    
-        # Texto bruto da div que junta data curta e categoria de viagem
-        # (ex.: "ago. de 2026 • Casal", ou só "ago. de 2026" quando o
-        # avaliador não marcou tipo de viagem). Usado tanto por
-        # get_review_date quanto por get_category — é a MESMA div nos dois
-        # casos, só cortamos em pedaços diferentes.
-        
         locator = review.locator(f'xpath={config.XPATHS["category"]}')
         if locator.count() == 0:
             return ""
         return (locator.first.text_content() or "").strip()
 
     def get_review_date(self, review: Locator) -> Optional[str]:
-        
-        # Retorna o texto bruto da data (ainda sem parsear), tentando três
-        # formas, da mais específica pra mais genérica:
-
-        # 1. Formato completo antigo ("Feita em DD de mês de AAAA"), via a
-        #    classe conhecida BNe1O — mantido como fallback caso volte.
-        # 2. A parte ANTES do "•" na div de categoria (ver
-        #    __get_date_category_raw_text): é onde a data mora quando vem
-        #    junto com o tipo de viagem ("ago. de 2026 • Casal").
-        # 3. Fallback: varre todo div/span do card em busca de um texto que
-        #    seja SÓ a data (sem categoria colada), pro caso de vir isolada.
-        
         logger.debug("Obtendo data do review")
 
         full_date = self.__safe_text(review.locator(f'xpath={config.XPATHS["review_date_full"]}'))
@@ -495,11 +325,6 @@ class Scraper:
         return None
 
     def parse_date(self, date: str) -> Optional[str]:
-        """
-        Aceita os dois formatos vindos de get_review_date:
-          - completo: "Feita em 15 de agosto de 2024" -> "15/08/2024"
-          - curto (sem dia): "out. de 2025" -> "10/2025"
-        """
         logger.debug("Parseando data")
         date = date.strip()
 
@@ -549,10 +374,6 @@ class Scraper:
 
     def get_local(self, review: Locator) -> str:
         logger.debug("Obtendo local no turista")
-        # Pós-redesign: cidade e contribuições vêm em divs "vYLts" separadas
-        # (a primeira é a cidade, dentro de um <span>; a segunda é só texto
-        # "N contribuições"). Não precisa mais de regex pra separar número
-        # colado no texto, como no formato antigo.
         vylts_divs = review.locator(f'xpath={config.XPATHS["local"]}')
         count = vylts_divs.count()
 
@@ -565,8 +386,6 @@ class Scraper:
         if span.count() > 0:
             return (span.first.text_content() or "").strip()
 
-        # Fallback: se não tiver span dentro, mas o texto não parecer ser
-        # "N contribuições", assume que é a cidade mesmo.
         text = (first.text_content() or "").strip()
         if "contribui" in text.lower():
             return ""
@@ -581,12 +400,6 @@ class Scraper:
         return match.group(1) if match else ""
 
     def __safe_text(self, locator: Locator, timeout: int = 3000) -> Optional[str]:
-        """Pega o texto do primeiro elemento que casar, sem pagar o preço de
-        um timeout longo (30s padrão) quando o elemento simplesmente não
-        existe nesse card. count()==0 é praticamente instantâneo (não
-        espera nada aparecer), então cobre o caso mais comum de falha
-        rápido; o timeout curto no text_content cobre o caso raro de o
-        elemento existir mas ainda estar renderizando."""
         if locator.count() == 0:
             return None
         try:
@@ -599,9 +412,6 @@ class Scraper:
     # =========================================================================
 
     def __dump_debug_snapshot(self, label: str):
-        """Salva screenshot + HTML da página no momento da falha, em
-        debug_snapshots/, pra diagnosticar bloqueios/telas inesperadas sem
-        precisar reproduzir manualmente."""
         try:
             os.makedirs("debug_snapshots", exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

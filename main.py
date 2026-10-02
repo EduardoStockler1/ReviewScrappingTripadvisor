@@ -101,11 +101,6 @@ def url_task(url: str, directory: str):
         filename = unidecode.unidecode(page_title)
         info("{} -> Abrindo o arquivo".format(filename))
 
-        # BUG CORRIGIDO: `directory` já é um caminho absoluto completo
-        # (os.getcwd() + "/reviews/{begin_time}"). O código original
-        # formatava de novo como "reviews/{directory}/...", duplicando o
-        # prefixo "reviews/" e resultando num caminho que nunca existia
-        # (FileNotFoundError na hora de abrir o CSV).
         csv_path = os.path.join(directory, "{}.csv".format(filename))
         file = open(csv_path, "w", newline="", encoding="utf-8")
         dict_to_csv_writer = start_csv_writer(file)
