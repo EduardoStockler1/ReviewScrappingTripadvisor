@@ -1,6 +1,7 @@
-from playwright.sync_api import sync_playwright, TimeoutError
+from playwright.sync_api import sync_playwright
 import time
 import re
+import sys
 
 INTERSTITIAL_TIMEOUT = 60
 
@@ -29,7 +30,7 @@ def dump_frames_debug(page):
             f"parent={parent_index} "
             f"name={frame.name!r}"
         )
-        # print(f"          url={frame.url!r}")
+        print(f"url={frame.url!r}")
 
     print("=" * 80)
 
@@ -123,7 +124,7 @@ def frame_has_interstitial(frame):
 
     return False
 
-def close_interstitial(page, timeout=60):
+def close_interstitial(page, timeout=INTERSTITIAL_TIMEOUT):
     print("Procurando interstitial...")
 
     deadline = time.monotonic() + timeout

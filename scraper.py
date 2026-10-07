@@ -3,6 +3,7 @@ import datetime
 import os
 import random
 import re
+import sys
 import time
 import logger
 import config
@@ -13,6 +14,8 @@ from playwright.sync_api import (
     Locator,
     TimeoutError,
 )
+
+from print_frame import Tee, log_file, original_stdout
 
 class Scraper:
 
@@ -50,11 +53,142 @@ class Scraper:
         #     context_kwargs["storage_state"] = config.STORAGE_STATE_PATH
 
         self.context = self.browser.new_context(**context_kwargs)
-        # self.context.clear_cookies()
         self.page = self.context.new_page() 
+        self.clear_all_site_storage(self.context, self.page())
         self.page.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
+
+    def clear_all_site_storage(self, context, page):
+        print("Limpando todos os dados do site")
+
+        # 1. cookies
+        # 2. local storage
+        # 3. session storage
+        # 4. indexedDB
+        # 5. cache storage
+
+        try:
+            context.clear_cookies()
+            print("[OK] Cookies removidos.")
+        except Exception as error:
+            print(f"[ERRO] Não foi possível limpar cookies: {error}")
+
+        try:
+            page.evaluate("""
+                async () => {
+                    try {
+                        localStorage.clear();
+                        console.log("[CLEANUP] localStorage limpo");
+                    } catch (e) {
+                        console.error(
+                            "[CLEANUP] Erro no localStorage:",
+                            e
+                        );
+                    }
+                    try {
+                        sessionStorage.clear();
+                        console.log("[CLEANUP] sessionStorage limpo");
+                    } catch (e) {
+                        console.error(
+                            "[CLEANUP] Erro no sessionStorage:",
+                            e
+                        );
+                    }
+                    try {
+                        if (indexedDB.databases) {
+
+                            const databases =
+                                await indexedDB.databases();
+
+                            for (const db of databases) {
+
+                                if (db.name) {
+                                    indexedDB.deleteDatabase(
+                                        db.name
+                                    );
+
+                                    console.log(
+                                        "[CLEANUP] IndexedDB removido:",
+                                        db.name
+                                    );
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.error(
+                            "[CLEANUP] Erro no IndexedDB:",
+                            e
+                        );
+                    }
+                    try {
+                        if ("caches" in window) {
+
+                            const cacheNames =
+                                await caches.keys();
+
+                            for (const cacheName of cacheNames) {
+
+                                await caches.delete(
+                                    cacheName
+                                );
+
+                                console.log(
+                                    "[CLEANUP] Cache removido:",
+                                    cacheName
+                                );
+                            }
+                        }
+                    } catch (e) {
+                        console.error(
+                            "[CLEANUP] Erro no Cache Storage:",
+                            e
+                        );
+                    }
+                }
+            """)
+
+            print("[OK] localStorage limpo.")
+            print("[OK] sessionStorage limpo.")
+            print("[OK] IndexedDB limpo.")
+            print("[OK] Cache Storage limpo.")
+
+        except Exception as error:
+            print(
+                f"[ERRO] Não foi possível limpar "
+                f"storage da página: {error}"
+            )
+
+        try:
+            workers = context.service_workers()
+
+            if workers:
+                print(
+                    f"[INFO] {len(workers)} Service Worker(s) "
+                    f"encontrado(s)."
+                )
+
+                for worker in workers:
+                    print(
+                        f"    Service Worker: {worker.url}"
+                    )
+
+                print(
+                    "[AVISO] Service Workers existentes "
+                    "foram detectados."
+                )
+
+            else:
+                print("[OK] Nenhum Service Worker encontrado.")
+
+        except Exception as error:
+            print(
+                f"[ERRO] Não foi possível verificar "
+                f"Service Workers: {error}"
+            )
+
+        print("Dados de navegação limpos.")
+
 
     def __enter__(self):
         return self
@@ -70,6 +204,8 @@ class Scraper:
         finally:
             try:
                 self.browser.close()
+                sys.stdout = original_stdout
+                log_file.close()
             finally:
                 self.playwright.stop()
 
