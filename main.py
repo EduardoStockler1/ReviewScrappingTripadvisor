@@ -37,8 +37,8 @@ def write_data_chunk(csv_writer: csv.DictWriter, data: List[Dict]):
 
 def scrap_url(scraper: Scraper, csv_writer: csv.DictWriter, page_title: str):
     review_amount = scraper.get_review_amount()
-    info(
-        "{} -> {} reviews encontrados".format(page_title, review_amount))
+    info("{} -> {} reviews encontrados".format(page_title, review_amount))
+
     reviews = []
     counter = 0
     has_next_page = True
@@ -50,15 +50,21 @@ def scrap_url(scraper: Scraper, csv_writer: csv.DictWriter, page_title: str):
             reviews += tmp_reviews
             counter += processed
 
-            info("{} -> {:.2f}% ({}/{})".format(page_title,
-                         (counter/review_amount)*100, counter, review_amount))
-            has_next_page = scraper.has_next_page()
-            info(f"Segurando {counter} reviews (vai salvar: {counter >= SAVING_THRESHOLD})")
+            if review_amount:
+                info("{} -> {:.2f}% ({}/{})".format(
+                    page_title, (counter / review_amount) * 100, counter, review_amount))
+
             if counter >= SAVING_THRESHOLD:
                 write_data_chunk(csv_writer, reviews)
                 reviews = []
                 counter = 0
 
+            # Checa o limite ANTES de navegar para a próxima página
+            if scraper.has_reached_review_limit():
+                info("{} -> Limite de reviews atingido, encerrando".format(page_title))
+                break
+
+            has_next_page = scraper.has_next_page()
             if has_next_page:
                 scraper.go_to_next_page(page_title)
     except Exception as exc:
@@ -66,20 +72,20 @@ def scrap_url(scraper: Scraper, csv_writer: csv.DictWriter, page_title: str):
         beep("exception")
 
     if reviews:
-        info(
-            "{} -> Salvando os restantes {} reviews".format(page_title, len(reviews))
-        )
+        info("{} -> Salvando os restantes {} reviews".format(page_title, len(reviews)))
         write_data_chunk(csv_writer, reviews)
-
 
 def start_csv_writer(file: TextIO) -> csv.DictWriter:
     example = {
         "title": "",
         "comment": "",
         "date": "",
+        "written_date": "",
         "rating": "",
         "local": "",
-        "category": ""
+        "category": "",
+        "response": "",
+        "response_date": "",
     }
     dict_to_csv_writer = csv.DictWriter(file, example.keys())
     dict_to_csv_writer.writeheader()

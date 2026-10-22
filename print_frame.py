@@ -1,6 +1,6 @@
 import sys
 import time
-
+import os
 
 class Tee:
     def __init__(self, *streams):
@@ -15,13 +15,18 @@ class Tee:
         for stream in self.streams:
             stream.flush()
 
-    def issaty(self):
+    def isatty(self):
         return False
 
+os.makedirs("intersential_logs", exist_ok=True)
+
 log_file = open(
-    f"close_iframe{time.time.strftime('%d', time.localtime())}.log", 
-    "a", 
-    encoding="utf-8", 
+    os.path.join(
+        "intersential_logs",
+        f"close_iframe{time.strftime('%d', time.localtime())}.log"
+    ),
+    "a",
+    encoding="utf-8",
     buffering=1
 )
 

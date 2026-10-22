@@ -5,6 +5,8 @@ import random
 import re
 import sys
 import time
+
+from unidecode.x000 import data
 import logger
 import config
 import close_iframe
@@ -54,7 +56,7 @@ class Scraper:
 
         self.context = self.browser.new_context(**context_kwargs)
         self.page = self.context.new_page() 
-        self.clear_all_site_storage(self.context, self.page())
+        self.clear_all_site_storage(self.context, self.page)
         self.page.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
@@ -387,31 +389,22 @@ class Scraper:
         return page_reviews, counter
 
     def has_reached_review_limit(self) -> bool:
-        """Usado pelo loop externo de paginação para saber se deve parar
-        de chamar go_to_next_page() (limite de teste já atingido)."""
+        # Usado pelo loop externo de paginação para saber se deve parar
+        # de chamar go_to_next_page() (limite de teste já atingido).
         return config.MAX_REVIEWS is not None and self.__total_reviews_collected >= config.MAX_REVIEWS
 
     def handle_review(self, review) -> Optional[Dict]:
         try:
-            title = self.__safe_text(
-                review.locator(f'xpath={config.XPATHS["review_title"]}')
-            )
-
-            comment = self.__safe_text(
-                review.locator(f'xpath={config.XPATHS["review_comment"]}')
-            )
-
+            title = self.__safe_text(review.locator(f'xpath={config.XPATHS["review_title"]}'))
+            comment = self.__safe_text(review.locator(f'xpath={config.XPATHS["review_comment"]}'))
             raw_date = self.get_review_date(review)
-            date = self.parse_date(raw_date) if raw_date else None
-
-            raw_rating = self.__safe_text(
-                review.locator(f'xpath={config.XPATHS["review_rating"]}')
-            )
+            date = self.parse_date(raw_date) if raw_date else None # data da visita
+            written_date = self.parse_written_date(self.__safe_text(review.locator(f'xpath={config.XPATHS["review_written_date"]}')))
+            raw_rating = self.__safe_text(review.locator(f'xpath={config.XPATHS["review_rating"]}'))
             rating = self.parse_rating(raw_rating)
-
             local = self.get_local(review)
-
             category = self.get_category(review)
+            response, response_date = self.get_response(review)
 
             if title is None or comment is None or raw_date is None:
                 self.__dump_review_html_once(review, "campo_ausente")
@@ -420,9 +413,12 @@ class Scraper:
                 "title": title,
                 "comment": comment,
                 "date": date,
+                "written_date": written_date,
                 "rating": rating,
                 "local": local,
                 "category": category,
+                "response": response,
+                "response_date": response_date
             }
         except Exception as e:
             logger.error(f"Erro ao processar review, ignorando: {e}")
@@ -540,6 +536,56 @@ class Scraper:
         except TimeoutError:
             return None
 
+    def __expand_read_more(self, scope: Locator, xpath: str, max_clicks: int = 3):
+        # Clica em "Leia mais" (comentário ou resposta), se houver
+        for _ in range(max_clicks):
+            btn = scope.locator(f'xpath={xpath}')
+            if btn.count() == 0:
+                return
+            first = btn.first
+            try:
+                if not first.is_visible():
+                    return
+                first.scroll_into_view_if_needed(timeout=2000)
+                first.click(timeout=3000)
+                # após expandir, o botão some (ou fica oculto)
+                first.wait_for(state="hidden", timeout=3000)
+            except TimeoutError:
+                logger.debug("Não foi possível expandir 'Leia mais'")
+                return
+
+    def parse_written_date(self, raw: Optional[str]) -> Optional[str]:
+        # Feita em 18 de agosto de 2026' -> '18/08/2026
+        if not raw:
+            return None
+        m = re.search(config.REGEXES["written_date"], raw.strip(), re.IGNORECASE)
+        if not m:
+            logger.error(f"Formato de data 'Feita em' inesperado: '{raw}'")
+            return None
+        dia, mes_nome, ano = m.groups()
+        mes = config.MESES_PT.get(mes_nome.lower())
+        if mes is None:
+            logger.error(f"Mês não reconhecido: '{mes_nome}'")
+            return None
+        try:
+            return datetime.date(int(ano), mes, int(dia)).strftime("%d/%m/%Y")
+        except ValueError as e:
+            logger.error(f"Data inválida ({raw}): {e}")
+            return None
+
+    def get_response(self, review: Locator) -> Tuple[Optional[str], Optional[str]]:
+        # Retorna (texto_da_resposta, data_da_resposta) ou (None, None) se não houver
+        block = review.locator(f'xpath={config.XPATHS["response_block"]}')
+        if block.count() == 0:
+            return "Não há resposta", None
+        block = block.first
+
+        self.__expand_read_more(block, config.XPATHS["response_read_more"])
+
+        text = self.__safe_text(block.locator(f'xpath={config.XPATHS["response_text"]}'))
+        raw_date = self.__safe_text(block.locator(f'xpath={config.XPATHS["response_date"]}'))
+        return (text.strip() if text else None), self.parse_written_date(raw_date)
+
     # =========================================================================
     # 5) DIAGNÓSTICO (screenshots/HTML salvos em caso de falha)
     # =========================================================================
@@ -557,10 +603,10 @@ class Scraper:
             logger.error(f"Não foi possível salvar snapshot de diagnóstico: {e}")
 
     def __dump_review_html_once(self, review: Locator, label: str, max_dumps: int = 3):
-        """Salva o outerHTML de um card de review específico quando um campo
-        essencial vem ausente, limitado a poucas vezes por execução (o
-        problema costuma ser sistemático — não precisa de milhares de
-        arquivos iguais pra diagnosticar)."""
+        # Salva o outerHTML de um card de review específico quando um campo
+        # essencial vem ausente, limitado a poucas vezes por execução (o
+        # problema costuma ser sistemático — não precisa de milhares de
+        # arquivos iguais pra diagnosticar).
         if self.__review_dumps_done >= max_dumps:
             return
         try:

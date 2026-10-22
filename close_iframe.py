@@ -1,7 +1,5 @@
-from playwright.sync_api import sync_playwright
 import time
 import re
-import sys
 
 INTERSTITIAL_TIMEOUT = 60
 

@@ -11,10 +11,21 @@ STORAGE_STATE_PATH = "storage_state.json"
 MIN_DELAY_BETWEEN_ACTIONS = 1.5
 MAX_DELAY_BETWEEN_ACTIONS = 4.0
 
-MAX_REVIEWS = 100
+MAX_REVIEWS = 10
 
 # XPath e regex usados em vários pontos do scrapper.py. Mantidos aqui pra não poluir a classe Scrapper.
 XPATHS = {
+    "review_read_more": ".//button[.//span[normalize-space()='Leia mais']]"
+                        "[not(ancestor::div[contains(@class,'HWNqw')])]",
+
+    "review_written_date": "(.//*[text()[starts-with(normalize-space(),'Feita em')]]"
+                           "[not(ancestor::div[contains(@class,'HWNqw')])])[1]",
+
+    "response_block": ".//div[contains(@class,'HWNqw')]",
+    "response_read_more": ".//button[.//span[normalize-space()='Leia mais']]",
+    "response_text": ".//div[contains(@class,'fIrGe')]",
+    "response_date": ".//*[text()[starts-with(normalize-space(),'Feita em')]]",
+    
     "accept_cookies": '//*[@id="onetrust-accept-btn-handler"]',
     "language_selector": '//span[text()="English"]',
     "lang_option": './/span[@id="menu-item-{}"]',
@@ -35,14 +46,11 @@ XPATHS = {
 # Transforma textos em dados estruturados (ex.: "out. de 2025" → {"month": 10, "year": 2025})
 REGEXES = {
     "starts_with_number": r'^\d.+$',
-    # Aceita nota inteira ou com casa decimal ("4 de 5 círculos" ou "4,5 de 5 círculos")
     "rating": r"^(\d+(?:[.,]\d+)?) de \d+ círculos$",
     "get_review_amount": r"^Mostrando.* de (.*) resultados$",
-    # A categoria/tipo de viagem, quando vem com data embutida, é "mai. de 2026 • Solo"
     "get_category": r"^.*•\s*(.*)$",
-    # Data completa antiga: "Feita em 15 de agosto de 2024"
     "full_date": r"^Feita em (\d{1,2}) de (\w+) de (\d{4})$",
-    # Data curta atual, sem dia: "out. de 2025" / "out de 2025"
+    "written_date": r"^Feita em\s+(\d{1,2})\s+de\s+(\S+)\s+de\s+(\d{4})$",
     "short_date": r"^(\w+)\.?\s+de\s+(\d{4})$",
 }
 
