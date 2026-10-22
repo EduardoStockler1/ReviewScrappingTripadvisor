@@ -528,6 +528,18 @@ class Scraper:
         match = re.match(config.REGEXES["get_category"], combined_text)
         return match.group(1) if match else ""
 
+    def get_response(self, review: Locator) -> Tuple[Optional[str], Optional[str]]:
+        # Retorna (texto_da_resposta, data_da_resposta) ou (None, None) se não houver
+        block = review.locator(f'xpath={config.XPATHS["response_block"]}') # 
+        if block.count() == 0:
+            return "Não há resposta", None
+        block = block.first
+        self.__expand_read_more(block, config.XPATHS["response_read_more"])
+        text = self.__safe_text(block.locator(f'xpath={config.XPATHS["response_text"]}'))
+        raw_date = self.__safe_text(block.locator(f'xpath={config.XPATHS["response_date"]}'))
+        return (text.strip() if text else None), self.parse_written_date(raw_date)
+
+
     def __safe_text(self, locator: Locator, timeout: int = 3000) -> Optional[str]:
         if locator.count() == 0:
             return None
@@ -538,6 +550,7 @@ class Scraper:
 
     def __expand_read_more(self, scope: Locator, xpath: str, max_clicks: int = 3):
         # Clica em "Leia mais" (comentário ou resposta), se houver
+        # recebe um escopo (review ou bloco de resposta) e o xpath relativo do botão
         for _ in range(max_clicks):
             btn = scope.locator(f'xpath={xpath}')
             if btn.count() == 0:
@@ -556,6 +569,7 @@ class Scraper:
 
     def parse_written_date(self, raw: Optional[str]) -> Optional[str]:
         # Feita em 18 de agosto de 2026' -> '18/08/2026
+        # recebe uma string do tipo "Feita em 18 de agosto de 2026" e retorna "18/08/2026"
         if not raw:
             return None
         m = re.search(config.REGEXES["written_date"], raw.strip(), re.IGNORECASE)
@@ -573,18 +587,6 @@ class Scraper:
             logger.error(f"Data inválida ({raw}): {e}")
             return None
 
-    def get_response(self, review: Locator) -> Tuple[Optional[str], Optional[str]]:
-        # Retorna (texto_da_resposta, data_da_resposta) ou (None, None) se não houver
-        block = review.locator(f'xpath={config.XPATHS["response_block"]}')
-        if block.count() == 0:
-            return "Não há resposta", None
-        block = block.first
-
-        self.__expand_read_more(block, config.XPATHS["response_read_more"])
-
-        text = self.__safe_text(block.locator(f'xpath={config.XPATHS["response_text"]}'))
-        raw_date = self.__safe_text(block.locator(f'xpath={config.XPATHS["response_date"]}'))
-        return (text.strip() if text else None), self.parse_written_date(raw_date)
 
     # =========================================================================
     # 5) DIAGNÓSTICO (screenshots/HTML salvos em caso de falha)
